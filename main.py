@@ -4612,7 +4612,295 @@ def next_occurrence_from_hhmm(hhmm_str, ref_dt=None):
         target = target + timedelta(days=1)
     
     return target
-    
+
+async def build_autorun_list_text():
+    """Build active autorun quiz list text."""
+
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                a.id,
+                a.quiz_id,
+                q.title,
+                a.schedule_time,
+                a.interval_minutes,
+                a.next_run
+            FROM autoruns a
+            INNER JOIN quizzes q ON q.quiz_id = a.quiz_id
+            WHERE a.active = 1
+            ORDER BY
+                CASE
+                    WHEN a.schedule_time IS NULL THEN 1
+                    ELSE 0
+                END,
+                a.schedule_time ASC,
+                a.id ASC
+        """)
+        rows = cursor.fetchall()
+
+    if not rows:
+        return (
+            "📋 <b>Active Autorun Quiz List</b>\n\n"
+            "⚠️ अभी कोई active autorun quiz configured नहीं है।"
+        )
+
+    lines = [
+        "📋 <b>Active Autorun Quiz List</b>",
+        "🇮🇳 सभी समय IST के अनुसार हैं।",
+        ""
+    ]
+
+    for index, (
+        autorun_id,
+        quiz_id,
+        title,
+        schedule_time,
+        interval_minutes,
+        next_run
+    ) in enumerate(rows, 1):
+
+        # HTML parse mode के लिए special characters escape करें
+        safe_title = (
+            str(title or "Untitled Quiz")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+        if schedule_time:
+            schedule_text = f"Daily at <b>{schedule_time} IST</b>"
+        else:
+            schedule_text = (
+                f"Every <b>{interval_minutes} minutes</b>"
+            )
+
+        next_run_text = ""
+
+        if next_run:
+            try:
+                next_run_dt = datetime.fromisoformat(next_run)
+
+                if next_run_dt.tzinfo is None:
+                    next_run_dt = next_run_dt.replace(tzinfo=IST)
+
+                next_run_text = (
+                    "\n   🔜 Next Run: <b>"
+                    f"{next_run_dt.astimezone(IST).strftime('%d-%m-%Y %I:%M %p')} IST"
+                    "</b>"
+                )
+            except (ValueError, TypeError):
+                pass
+
+        lines.append(
+            f"{index}. 🎯 <b>{safe_title}</b>\n"
+            f"   🆔 Quiz ID: <code>{quiz_id}</code>\n"
+            f"   ⚙️ Autorun ID: <code>{autorun_id}</code>\n"
+            f"   ⏰ Schedule: {schedule_text}"
+            f"{next_run_text}\n"
+        )
+
+    lines.append(f"📊 <b>Total Active Autoruns:</b> {len(rows)}")
+
+    return "\n".join(lines)
+
+
+async def send_autorun_list_to_support(bot, old_message_id=None):
+    """Delete old autorun list and send the latest list to support group."""
+
+    if not SUPPORT_GROUP_ID:
+        logging.warning("SUPPORT_GROUP_ID is not configured")
+        return None
+
+    # Delete previous autorun list message
+    if old_message_id:
+        try:
+            await bot.delete_message(
+                chat_id=SUPPORT_GROUP_ID,
+                message_id=old_message_id
+            )
+        except Exception as error:
+            logging.warning(
+                f"Could not delete old autorun list message: {error}"
+            )
+
+    list_text = await build_autorun_list_text()
+
+    # Telegram message limit protection
+    if len(list_text) <= 4096:
+        sent_message = await bot.send_message(
+            chat_id=SUPPORT_GROUP_ID,
+            text=list_text,
+            parse_mode="HTML"
+        )
+        return sent_message.message_id
+
+    # अगर list बहुत बड़ी हो जाए तो chunks में भेजें
+    first_message_id = None
+
+    for start in range(0, len(list_text), 4000):
+        chunk = list_text[start:start + 4000]
+
+        sent_message = await bot.send_message(
+            chat_id=SUPPORT_GROUP_ID,
+            text=chunk,
+            parse_mode="HTML"
+        )
+
+        if first_message_id is None:
+            first_message_id = sent_message.message_id
+
+    return first_message_id
+
+
+async def autorun_list_worker(bot):
+    """
+    Support group में autorun list हर 2 घंटे में update करता है।
+    पुराना list message delete करके नया message भेजता है।
+    """
+
+    old_message_id = None
+
+    try:
+        while True:
+            try:
+                old_message_id = await send_autorun_list_to_support(
+                    bot=bot,
+                    old_message_id=old_message_id
+                )
+
+                logging.info(
+                    "✅ Autorun list sent to support group. "
+                    "Next update after 2 hours."
+                )
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as error:
+                logging.error(
+                    f"Error while updating autorun list: {error}",
+                    exc_info=True
+                )
+
+            # 2 hours = 7200 seconds
+            await asyncio.sleep(2 * 60 * 60)
+
+    except asyncio.CancelledError:
+        logging.info("🛑 Automatic autorun list worker stopped")
+
+        # Worker stop होने पर आखिरी list भी delete कर दें
+        if old_message_id:
+            try:
+                await bot.delete_message(
+                    chat_id=SUPPORT_GROUP_ID,
+                    message_id=old_message_id
+                )
+            except Exception:
+                pass
+
+
+async def autorun_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Owner-only command.
+
+    /autorunlist:
+    - तुरंत autorun list भेजता है
+    - हर 2 घंटे में पुराने message को delete करके नया भेजता है
+    """
+
+    global AUTORUN_LIST_TASK
+
+    try:
+        message = update.message
+
+        if not message:
+            return
+
+        if OWNER_ID is None or message.from_user.id != OWNER_ID:
+            await message.reply_text(
+                "❌ Unauthorized - Only bot owner can use this command."
+            )
+            return
+
+        if not SUPPORT_GROUP_ID:
+            await message.reply_text(
+                "❌ SUPPORT_GROUP_ID is not configured in .env"
+            )
+            return
+
+        # पहले से worker चल रहा है तो उसे बंद करें
+        if AUTORUN_LIST_TASK and not AUTORUN_LIST_TASK.done():
+            AUTORUN_LIST_TASK.cancel()
+
+            try:
+                await AUTORUN_LIST_TASK
+            except asyncio.CancelledError:
+                pass
+
+        # नया worker शुरू करें
+        AUTORUN_LIST_TASK = asyncio.create_task(
+            autorun_list_worker(context.bot)
+        )
+
+        await message.reply_text(
+            "✅ Autorun list automatic update शुरू हो गया है।\n\n"
+            "📤 अभी support group में list भेजी गई है।\n"
+            "🔄 हर 2 घंटे में पुराना message delete करके नया list भेजा जाएगा।\n\n"
+            "⛔ बंद करने के लिए: /stopautorunlist"
+        )
+
+    except Exception as error:
+        logging.error(
+            f"Error starting autorun list worker: {error}",
+            exc_info=True
+        )
+
+        if update.message:
+            await update.message.reply_text(
+                "❌ Autorun list automatic update शुरू नहीं हो सका।"
+            )
+
+
+async def stop_autorun_list_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    """Stop automatic autorun list updates."""
+
+    global AUTORUN_LIST_TASK
+
+    try:
+        if OWNER_ID is None or update.message.from_user.id != OWNER_ID:
+            await update.message.reply_text(
+                "❌ Unauthorized - Only bot owner can use this command."
+            )
+            return
+
+        if AUTORUN_LIST_TASK and not AUTORUN_LIST_TASK.done():
+            AUTORUN_LIST_TASK.cancel()
+
+            try:
+                await AUTORUN_LIST_TASK
+            except asyncio.CancelledError:
+                pass
+
+            AUTORUN_LIST_TASK = None
+
+            await update.message.reply_text(
+                "✅ Automatic autorun list update बंद कर दिया गया है।"
+            )
+        else:
+            await update.message.reply_text(
+                "⚠️ Automatic autorun list पहले से बंद है।"
+            )
+
+    except Exception as error:
+        logging.error(
+            f"Error stopping autorun list worker: {error}",
+            exc_info=True
+)
+
 # ⚡ send message to support group (only use owner)
 async def send_to_support_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Owner-only: In private chat reply to a message and copy it (with buttons if any) to SUPPORT_GROUP_ID."""
