@@ -89,6 +89,7 @@ GROUP_GAMES = {}
 
 # In-memory map for autorun asyncio tasks: key = autorun_id, value = asyncio.Task
 AUTORUN_TASKS = {}
+AUTORUN_LIST_TASK = None
 # Global autorun serial lock — ensures autoruns run one-by-one in SUPPORT_GROUP_ID
 AUTORUN_SERIAL_LOCK = asyncio.Lock()
 # ====================================================================
@@ -4796,6 +4797,8 @@ async def main():
         app.add_handler(CallbackQueryHandler(handle_stop_quiz_from_pause, pattern="^stopquiz_"))
         app.add_handler(CommandHandler("autorun", autorun_command))
         app.add_handler(CommandHandler("stopautorun", stopautorun_command))
+        app.add_handler(CommandHandler("autorunlist", autorun_list_command))
+        app.add_handler(CommandHandler("stopautorunlist", stop_autorun_list_command))
         
         app.add_handler(PollAnswerHandler(track_poll_answers))
         app.add_handler(InlineQueryHandler(inline_query_handler))
