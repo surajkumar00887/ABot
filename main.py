@@ -4959,6 +4959,57 @@ async def send_to_support_group(update: Update, context: ContextTypes.DEFAULT_TY
             await update.message.reply_text("❌ An unexpected error occurred. Please try again.")
         except Exception:
             pass
+            
+# Global variable to keep latest live-time message id
+async def send_live_indian_time_message(app, chat_id=None, interval_seconds=60):
+    """
+    Support group me real Indian time ka live message bhejta hai.
+    Har interval_seconds par new time message bhejta hai aur purana delete karta hai.
+    """
+    global LIVE_TIME_MESSAGE_ID
+
+    if chat_id is None:
+        chat_id = SUPPORT_GROUP_ID
+
+    if not chat_id:
+        logging.warning("SUPPORT_GROUP_ID not configured, live time message not sent.")
+        return
+
+    while True:
+        try:
+            now_ist = datetime.now(IST)
+            time_text = now_ist.strftime("%d-%m-%Y %H:%M:%S IST")
+
+            message = (
+                "<b>🕒 Live Indian Time</b>\n\n"
+                f"<code>{time_text}</code>"
+            )
+
+            # Agar purana live message hai, toh delete kar do
+            if LIVE_TIME_MESSAGE_ID is not None:
+                try:
+                    await app.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=LIVE_TIME_MESSAGE_ID
+                    )
+                except Exception:
+                    pass
+
+            # Naya message bhejo
+            sent = await app.bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                parse_mode="HTML"
+            )
+
+            LIVE_TIME_MESSAGE_ID = sent.message_id
+            logging.info(f"✅ Live IST time message updated: {time_text}")
+
+        except Exception as e:
+            logging.error(f"❌ Failed to send live time message: {e}", exc_info=True)
+
+        await asyncio.sleep(interval_seconds)
+        
 # =====================================================================
 
 async def main():
