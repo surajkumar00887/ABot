@@ -5005,7 +5005,7 @@ async def send_to_support_group(update: Update, context: ContextTypes.DEFAULT_TY
             pass
             
 # Global variable to keep latest live-time message id
-async def send_live_indian_time_message(app, chat_id=None, interval_seconds=60):
+async def send_live_indian_time_message(app, chat_id=None, interval_seconds=1800):
     """
     Support group me real Indian time ka live message bhejta hai.
     Har interval_seconds par new time message bhejta hai aur purana delete karta hai.
