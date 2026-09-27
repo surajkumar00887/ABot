@@ -91,6 +91,7 @@ GROUP_GAMES = {}
 # In-memory map for autorun asyncio tasks: key = autorun_id, value = asyncio.Task
 AUTORUN_TASKS = {}
 AUTORUN_LIST_TASK = None
+LIVE_TIME_MESSAGE_ID = None
 # Global autorun serial lock — ensures autoruns run one-by-one in SUPPORT_GROUP_ID
 AUTORUN_SERIAL_LOCK = asyncio.Lock()
 # ====================================================================
