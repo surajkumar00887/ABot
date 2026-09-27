@@ -4705,51 +4705,94 @@ async def build_autorun_list_text():
 
     return "\n".join(lines)
 
-
 async def send_autorun_list_to_support(bot, old_message_id=None):
-    """Delete old autorun list and send the latest list to support group."""
+    """Delete old autorun list and send the latest list to support group safely."""
 
     if not SUPPORT_GROUP_ID:
         logging.warning("SUPPORT_GROUP_ID is not configured")
         return None
 
-    # Delete previous autorun list message
+    # Delete previous autorun list message safely
     if old_message_id:
         try:
+            # Delete call me bhi read_timeout add kiya hai taaki network delay me crash na ho
             await bot.delete_message(
                 chat_id=SUPPORT_GROUP_ID,
-                message_id=old_message_id
+                message_id=old_message_id,
+                read_timeout=15
             )
         except Exception as error:
             logging.warning(
                 f"Could not delete old autorun list message: {error}"
             )
 
+    # Database se direct pure items ki raw rows manga lijiye
+    # Kyunki lines ko character wise kaatne par HTML tags corrupt ho jate hain.
     list_text = await build_autorun_list_text()
 
-    # Telegram message limit protection
+    # Telegram message limit protection (Safe Timeout parameters ke saath)
     if len(list_text) <= 4096:
-        sent_message = await bot.send_message(
-            chat_id=SUPPORT_GROUP_ID,
-            text=list_text,
-            parse_mode="HTML"
-        )
-        return sent_message.message_id
+        try:
+            sent_message = await bot.send_message(
+                chat_id=SUPPORT_GROUP_ID,
+                text=list_text,
+                parse_mode="HTML",
+                read_timeout=20,   # Telegram ko response dene ke liye 20s ka time diya
+                write_timeout=20
+            )
+            return sent_message.message_id
+        except (TimedOut, NetworkError) as e:
+            logging.error(f"Timeout/Network error while sending single message: {e}")
+            # Ek baar aur retry karte hain thoda ruk kar
+            await asyncio.sleep(3)
+            try:
+                sent_message = await bot.send_message(
+                    chat_id=SUPPORT_GROUP_ID, text=list_text, parse_mode="HTML", read_timeout=30
+                )
+                return sent_message.message_id
+            except Exception:
+                return None
 
-    # अगर list बहुत बड़ी हो जाए तो chunks में भेजें
+    # AGAR LIST BAHUT BADI HAI TO SAFE CHUNKING (CHARACTER BY CHARACTER NAHI)
+    # Behtar hoga ki build_autorun_list_text() ko lines me hi divide rakhein, 
+    # par abhi ke liye character split ko crash-proof banaya gaya hai:
     first_message_id = None
+    
+    # 4000 ki jagah 3800 ka buffer rakhein taaki HTML tags break na hon
+    for start in range(0, len(list_text), 3800):
+        chunk = list_text[start:start + 3800]
+        
+        # HTML tag validation check (Agar tag aadha kata hai to use fix karein ya plain text bhejein)
+        # Safe approach: text ko bina parse_mode ke bhej sakte hain agar parsing crash ho rahi ho
+        current_parse_mode = "HTML"
+        if chunk.count("<") != chunk.count(">"):
+            current_parse_mode = None # Tag mismatch hone par plain text bhejega taaki error na aaye
 
-    for start in range(0, len(list_text), 4000):
-        chunk = list_text[start:start + 4000]
-
-        sent_message = await bot.send_message(
-            chat_id=SUPPORT_GROUP_ID,
-            text=chunk,
-            parse_mode="HTML"
-        )
-
-        if first_message_id is None:
-            first_message_id = sent_message.message_id
+        for retry in range(3): # 3 baar retry karega agar timeout aaye to
+            try:
+                sent_message = await bot.send_message(
+                    chat_id=SUPPORT_GROUP_ID,
+                    text=chunk,
+                    parse_mode=current_parse_mode,
+                    read_timeout=25,
+                    write_timeout=25
+                )
+                
+                if first_message_id is None:
+                    first_message_id = sent_message.message_id
+                
+                # Ek chunk bhejte hi mandatory 1.5 second ka pause dein taaki Telegram flood limit ya timeout hit na kare
+                await asyncio.sleep(1.5)
+                break # Success hote hi retry loop se bahar niklein
+                
+            except TimedOut:
+                logging.warning(
+                    f"Timeout hit on chunk {start}, attempt {retry + 1}. Retrying after sleep..."
+                )
+                await asyncio.sleep(3 * (retry + 1)) # Har fail attempt par zyada wait karega
+            except Exception as e:
+                logging.error(f"Failed to send chunk due to general error: {e}")
+                break
 
     return first_message_id
 
