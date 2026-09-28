@@ -4986,11 +4986,15 @@ async def main():
             entry_points=[CommandHandler("autoquiz", autoquiz_start)],
             states={
                 TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_topic)],
+                BOOK_NAME: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_book_name),
+                    CommandHandler("skip", handle_book_name)
+                  ],
                 Q_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_q_count)],
                 TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title)],
                 DESCRIPTION: [
-                        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_description),
-                        CommandHandler("skip", handle_description)
+                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_description),
+                     CommandHandler("skip", handle_description)
                     ],
                 LANGUAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_language)],
                 EXPLANATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_explanation)],
