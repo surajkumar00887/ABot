@@ -96,14 +96,15 @@ AUTORUN_SERIAL_LOCK = asyncio.Lock()
 # ====================================================================
 # 🔥 FULLY OPERATIONAL GLOBAL CONVERSATION STATES (AUTOMATIC NO-OVERLAP SEQUENCE)
 # ====================================================================
-# New quiz build flow states (0 to 5)
-TITLE, DESCRIPTION, QUESTIONS, PRE_MESSAGE, TIMER, NEGATIVE = range(6)
+# Auto quiz flow: TOPIC -> Q_COUNT -> BOOK_NAME -> TITLE -> ...
+(TOPIC, Q_COUNT, BOOK_NAME, TITLE, DESCRIPTION, LANGUAGE,
+ EXPLANATION, DIFFICULTY, OPTIONS_COUNT, TIME_LIMIT, NEGATIVE) = range(11)
 
-# Main quiz edit panel menu flows (6 to 9)
-EDIT_TITLE, EDIT_DESC, EDIT_TIMER, EDIT_NEGATIVE = range(6, 10)
+# Main quiz edit panel menu flows
+EDIT_TITLE, EDIT_DESC, EDIT_TIMER, EDIT_NEGATIVE = range(11, 15)
 
-# Question inner attributes edit panels (10 to 14)
-EDIT_QUESTION_TEXT, EDIT_QUESTION_OPTIONS, EDIT_QUESTION_CORRECT, EDIT_QUESTION_EXPLANATION, EDIT_QUESTION_PRE_MESSAGE = range(10, 15)
+# Question inner attributes edit panels
+EDIT_QUESTION_TEXT, EDIT_QUESTION_OPTIONS, EDIT_QUESTION_CORRECT, EDIT_QUESTION_EXPLANATION, EDIT_QUESTION_PRE_MESSAGE = range(15, 20)
 # ====================================================================
 
 def escape_markdown(text):
