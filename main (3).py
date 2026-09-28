@@ -779,12 +779,13 @@ async def handle_book_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return Q_COUNT
 
 async def handle_q_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_authorized(update): return Q_COUNT
-    
+    if not is_authorized(update):
+        return Q_COUNT
+
     context.user_data['q_count'] = int(update.message.text)
     await update.message.reply_text(
         f"<blockquote>✅ Questions Count: <b>{context.user_data['q_count']}</b></blockquote>\n\n"
-        "<blockquote>📝 <b>Step 3:</b> Send me the Title of your quiz.</blockquote>",
+        "<blockquote>📝 <b>Step 4:</b> Send me the Title of your quiz.</blockquote>",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove(selective=True)
     )
