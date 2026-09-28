@@ -278,7 +278,309 @@ async def new_quiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
  EXPLANATION, DIFFICULTY, OPTIONS_COUNT, TIME_LIMIT, NEGATIVE) = range(10)
 
 # AI Question Generator helper
+def generate_bulk_questions_ai(topic, count, lang, difficulty, options_cnt, book_name=""):
+    """
+    Gemini और Google Search Grounding की मदद से quiz questions generate करता है।
+    topic + optional book_name support भी देता है।
+    """
 
+    if not ai_client:
+        logging.warning("⚠️ AI CLIENT NOT INITIALIZED")
+        logging.warning(f"GEMINI_API_KEY present: {bool(GEMINI_API_KEY)}")
+        return None
+
+    try:
+        count = int(count)
+        options_cnt = int(options_cnt)
+    except (TypeError, ValueError):
+        logging.error("❌ Invalid count or options count")
+        return None
+
+    if count <= 0:
+        logging.error("❌ Question count must be greater than 0")
+        return None
+
+    if options_cnt < 2 or options_cnt > 4:
+        logging.error("❌ Options count must be between 2 and 4")
+        return None
+
+    max_attempts = 3
+    current_date_str = datetime.now(IST).strftime("%B %d, %Y")
+    difficulty_lower = str(difficulty).strip().lower()
+
+    if "easy" in difficulty_lower:
+        difficulty_instruction = """
+- Difficulty: EASY
+- Ask direct factual and basic conceptual questions.
+- Use clearly distinguishable options.
+- Avoid confusing wording.
+- Avoid obscure or doubtful facts.
+"""
+
+    elif "hard" in difficulty_lower or "difficult" in difficulty_lower:
+        difficulty_instruction = """
+- Difficulty: HARD
+- Ask analytical, conceptual, chronological, or statement-based questions.
+- Incorrect options should be realistic and closely related.
+- Verify every answer carefully.
+"""
+
+    else:
+        difficulty_instruction = """
+- Difficulty: MEDIUM
+- Mix factual knowledge with moderate conceptual understanding.
+- Questions should require some thinking.
+- Incorrect options should be plausible but clearly incorrect.
+"""
+
+    safe_book_name = str(book_name or "").strip()
+    if safe_book_name:
+        book_instruction = f"""
+- Source Book / Book Name: "{safe_book_name}"
+- Questions should be based on this book's content, theme, characters, events, ideas, or facts.
+- If it is a fiction book, keep questions tied to the story, world, plot, and characters.
+- If it is a non-fiction book, keep questions based on the book's main concepts, facts, and arguments.
+- Avoid making up facts that are not clearly supported by the book.
+"""
+    else:
+        book_instruction = """
+- Source Book / Book Name: Not specified
+- Generate questions based only on the provided topic.
+"""
+
+    for attempt in range(1, max_attempts + 1):
+        logging.info(f"🤖 AI generation attempt {attempt}/{max_attempts}: {count} questions on '{topic}'")
+
+        prompt = f"""
+You are an expert quiz-question generator and fact-checker.
+
+Generate exactly {count} unique multiple-choice quiz questions about:
+
+"{topic}"
+
+{book_instruction}
+
+Output language:
+{lang}
+
+Required options per question:
+{options_cnt}
+
+Today's real-world date is:
+{current_date_str}
+
+Use Google Search grounding to verify facts, especially current affairs and general knowledge.
+If the topic is tied to a book, use the book's themes and content as the primary reference.
+If some facts are uncertain, do not guess.
+
+{difficulty_instruction}
+
+STRICT OUTPUT RULES:
+1. Return ONLY a valid JSON array.
+2. Do not return Markdown.
+3. Do not use ```json or ``` fences.
+4. Do not add any text before or after the JSON array.
+5. Generate exactly {count} questions.
+6. Every question must be unique.
+7. Every question must contain exactly {options_cnt} options.
+8. Every option must be different and meaningful.
+9. The "correct" value must be a zero-based integer index.
+10. The correct index must be between 0 and {options_cnt - 1}.
+11. Vary the correct answer position.
+12. Do not always put the correct answer at index 0.
+13. Every question must contain an explanation.
+14. The explanation must explain why the selected correct option is correct.
+15. The explanation must not support any wrong option.
+16. Do not include citations, URLs, Markdown, or source links inside JSON values.
+17. Never guess an answer.
+
+Required JSON format:
+[
+  {{
+    "question": "Question text?",
+    "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+    "correct": 2,
+    "explanation": "The selected option is correct because..."
+  }}
+]
+"""
+
+        try:
+            response = ai_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())]
+                )
+            )
+
+            if not response:
+                logging.warning(f"⚠️ Attempt {attempt}: Empty response received")
+                if attempt < max_attempts:
+                    import time
+                    time.sleep(2 * attempt)
+                continue
+
+            response_text = getattr(response, "text", None)
+
+            if not response_text:
+                logging.warning(f"⚠️ Attempt {attempt}: Gemini returned no text")
+                if attempt < max_attempts:
+                    import time
+                    time.sleep(2 * attempt)
+                continue
+
+            response_text = response_text.strip()
+            response_text = response_text.replace("```json", "")
+            response_text = response_text.replace("```", "")
+            response_text = response_text.strip()
+
+            match = re.search(r"\[.*\]", response_text, re.DOTALL)
+            if not match:
+                logging.warning(f"⚠️ Attempt {attempt}: No JSON array found")
+                logging.warning(f"Raw response: {response_text[:1000]}")
+                if attempt < max_attempts:
+                    import time
+                    time.sleep(2 * attempt)
+                continue
+
+            json_text = match.group(0).strip()
+
+            try:
+                generated_questions = json.loads(json_text)
+            except json.JSONDecodeError as json_error:
+                logging.warning(f"⚠️ Attempt {attempt}: JSON parsing failed: {json_error}")
+                logging.warning(f"Invalid JSON: {json_text[:1000]}")
+                if attempt < max_attempts:
+                    import time
+                    time.sleep(2 * attempt)
+                continue
+
+            if not isinstance(generated_questions, list):
+                logging.warning(f"⚠️ Attempt {attempt}: Response is not a list")
+                if attempt < max_attempts:
+                    import time
+                    time.sleep(2 * attempt)
+                continue
+
+            valid_questions = []
+            used_questions = set()
+
+            for index, question_data in enumerate(generated_questions):
+                try:
+                    if not isinstance(question_data, dict):
+                        logging.warning(f"⚠️ Skipping Q{index + 1}: Not an object")
+                        continue
+
+                    question_text = question_data.get("question")
+                    options = question_data.get("options")
+                    correct_index = question_data.get("correct")
+                    explanation = question_data.get("explanation")
+
+                    if not isinstance(question_text, str):
+                        logging.warning(f"⚠️ Skipping Q{index + 1}: Invalid question text")
+                        continue
+
+                    question_text = question_text.strip()
+                    if not question_text:
+                        logging.warning(f"⚠️ Skipping Q{index + 1}: Empty question")
+                        continue
+
+                    question_key = re.sub(r"\s+", " ", question_text.casefold())
+                    if question_key in used_questions:
+                        logging.warning(f"⚠️ Skipping duplicate question: {question_text[:80]}")
+                        continue
+
+                    if not isinstance(options, list):
+                        logging.warning(f"⚠️ Skipping Q{index + 1}: Options are not a list")
+                        continue
+
+                    if len(options) != options_cnt:
+                        logging.warning(f"⚠️ Skipping Q{index + 1}: Expected {options_cnt} options, got {len(options)}")
+                        continue
+
+                    cleaned_options = []
+                    for option in options:
+                        if not isinstance(option, str):
+                            option = str(option)
+                        option = option.strip()
+                        if not option:
+                            raise ValueError("Empty option found")
+                        cleaned_options.append(option)
+
+                    normalized_options = [re.sub(r"\s+", " ", option.casefold()) for option in cleaned_options]
+                    if len(set(normalized_options)) != len(normalized_options):
+                        logging.warning(f"⚠️ Skipping Q{index + 1}: Duplicate options")
+                        continue
+
+                    if isinstance(correct_index, bool):
+                        logging.warning(f"⚠️ Skipping Q{index + 1}: Boolean correct index")
+                        continue
+
+                    try:
+                        correct_index = int(correct_index)
+                    except (ValueError, TypeError):
+                        logging.warning(f"⚠️ Skipping Q{index + 1}: Invalid correct index: {correct_index}")
+                        continue
+
+                    if not 0 <= correct_index < len(cleaned_options):
+                        logging.warning(f"⚠️ Skipping Q{index + 1}: Correct index {correct_index} is out of range")
+                        continue
+
+                    if explanation is None:
+                        explanation = ""
+                    if not isinstance(explanation, str):
+                        explanation = str(explanation)
+                    explanation = explanation.strip()
+                    if not explanation:
+                        logging.warning(f"⚠️ Skipping Q{index + 1}: Empty explanation")
+                        continue
+
+                    if len(explanation) > 200:
+                        explanation = explanation[:197].rstrip() + "..."
+
+                    valid_questions.append({
+                        "question": question_text,
+                        "options": cleaned_options,
+                        "correct": correct_index,
+                        "explanation": explanation
+                    })
+
+                    used_questions.add(question_key)
+                    logging.info(f"✅ Validated Q{len(valid_questions)}: correct index={correct_index}")
+
+                except (ValueError, TypeError, KeyError) as question_error:
+                    logging.warning(f"⚠️ Could not validate Q{index + 1}: {question_error}")
+                    continue
+
+            if len(valid_questions) < count:
+                logging.warning(f"⚠️ Attempt {attempt}: Requested {count} questions, but only {len(valid_questions)} valid questions found")
+                if attempt < max_attempts:
+                    import time
+                    time.sleep(2 * attempt)
+                    continue
+
+            if not valid_questions:
+                logging.error(f"❌ Attempt {attempt}: No valid questions generated")
+                if attempt < max_attempts:
+                    import time
+                    time.sleep(2 * attempt)
+                    continue
+                return None
+
+            logging.info(f"✅ AI generation successful on attempt {attempt}: {len(valid_questions)} valid questions")
+            return valid_questions[:count]
+
+        except Exception as api_error:
+            logging.error(f"❌ AI generation attempt {attempt} failed: {api_error}", exc_info=True)
+            if attempt < max_attempts:
+                import time
+                retry_delay = 2 * attempt
+                logging.info(f"🔁 Retrying AI generation after {retry_delay} seconds...")
+                time.sleep(retry_delay)
+
+    logging.error(f"❌ Quiz generation failed after {max_attempts} attempts")
+    return None
 
 def repair_question_with_ai(question_text, options, correct_index, explanation):
     """Question, correct option और explanation को दोबारा verify करता है।"""
