@@ -737,17 +737,42 @@ async def autoquiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return TOPIC
 
 async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_authorized(update): return TOPIC
-    
-    context.user_data['topic'] = update.message.text
-    
-    # ✅ Selective Keyboard 2: Question Count
-    reply_keyboard = [['10', '20', '50', '70']]
-    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True, selective=True)
-    
+    if not is_authorized(update):
+        return TOPIC
+
+    context.user_data['topic'] = update.message.text.strip()
+
     await update.message.reply_text(
         f"<blockquote>✅ Topic Saved: <b>{context.user_data['topic']}</b></blockquote>\n\n"
-        "<blockquote>🔢 <b>Step 2:</b> How many questions do you want?</blockquote>",
+        "<blockquote>📚 <b>Step 2 (Optional):</b> Enter the book name or source book for this quiz.</blockquote>\n"
+        "Type <b>/skip</b> if you do not want to use any specific book.",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup(
+            [["/skip"]],
+            one_time_keyboard=True,
+            resize_keyboard=True,
+            selective=True
+        )
+    )
+    return BOOK_NAME
+
+
+async def handle_book_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_authorized(update):
+        return BOOK_NAME
+
+    text = update.message.text.strip()
+
+    if text.lower() == "/skip" or text.lower() == "skip":
+        context.user_data['book_name'] = ""
+    else:
+        context.user_data['book_name'] = text
+
+    reply_keyboard = [['10', '20', '50', '70']]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True, selective=True)
+
+    await update.message.reply_text(
+        "<blockquote>🔢 <b>Step 3:</b> How many questions do you want?</blockquote>",
         parse_mode="HTML",
         reply_markup=markup
     )
