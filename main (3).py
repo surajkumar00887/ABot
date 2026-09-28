@@ -917,7 +917,7 @@ async def handle_time_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # बैकग्राउंड में AI जनरेशन टास्क को शुरू करें
         book_name = context.user_data.get("book_name", "")
         task = asyncio.create_task(asyncio.to_thread(
-        generate_bulk_questions_ai, topic, count, lang, difficulty, options_cnt, book_name
+            generate_bulk_questions_ai, topic, count, lang, difficulty, options_cnt, book_name
         ))
         
         # --- ⏳ लाइव 3-3 सेकंड का डिलीट + न्यू मैसेज लूप ---
